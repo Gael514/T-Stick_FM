@@ -1,3 +1,6 @@
+// Evaluate line to list available devices
+("Available output devices:"); ServerOptions.outDevices.collect({|msg| msg.postln}); "";
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                     START MAIN CODE                                                        //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -7,21 +10,38 @@
 ////////////////////////////////
 
 s = Server.local;
+// Select output device
 s.options.outDevice_(
 	// "Windows WASAPI : Microphone Array (Realtek High Definition Audio)"
 	// "ASIO : Focusrite USB ASIO"
 	// "ASIO : ReaRoute ASIO (x64)";
-	"ASIO : AudioBox ASIO Driver"
+	// "ASIO : AudioBox ASIO Driver"
+	"ASIO : ASIO MADIface USB"
 );
+s.options.sampleRate_(48000);
 
-// number of output channels
+// number of output channels (may allow for other processes to run on other audio channels)
 ~fMnumChannels = 2;
+
+// Choose mono/stereo output
+// ~mode = "mono";
+~mode = "stereo";
+
+// mono ro stereo audio output (default is mono)
+~fMnumOut = (~mode == "stereo").if(2, 1);
 s.options.numOutputBusChannels_(~fMnumChannels);
 
-// Main Volume in dBFS
+// Main Volume in dBFS (may be adjusted in volume GUI)
 ~masterVol = -9;
 
-s.options.sampleRate_(48000);
+// T-Stick name
+~fMtStick = "TStick_570";
+
+// receiving port
+~fMrecvPort = 8200;
+
+// audio output bus
+~out = 0;
 
 s.newBusAllocators; // resets the bus allocation counter
 ServerTree.removeAll;
@@ -37,14 +57,6 @@ Window.closeAll;
 //2. initialize global variables
 ////////////////////////////////
 
-// T-Stick name
-~fMtStick = "TStick_516";
-
-// receiving port
-~fMrecvPort = 8000;
-
-// audio output bus
-~out = 0;
 
 // List of DMI control parameters [OSC address, size, mapped to a control bus or not]
 ~tStickParam = [
@@ -78,8 +90,6 @@ Window.closeAll;
 
 // List of sound synthesis control parameters [, [intial values], mapped or not]
 ~fmParam = [
-	// ["sndBuf"        ,                   [ 0 ],         ],
-	// ["rates"         , [ 1, 1, 1, 1, 1, 1, 1 ], "mapped"],
 	["revMix"        ,                [ 0.33 ], "mapped"],
 	["revRoom"       ,                 [ 0.5 ], "mapped"],
 	["revDamp"       ,                 [ 0.2 ], "mapped"],
@@ -730,9 +740,14 @@ s.waitForBoot({
 		freq = (index + envI) * c / cm * SinOsc.ar(c / cm) + c;
 		env = EnvGen.kr(Env.asr(atk, 1, rel, [atkCrv, relCrv]), gate, doneAction: 2) * amp;
 		sig = SinOsc.ar(freq) * env;
+
 		sig = LeakDC.ar(sig);
-		pan = LFNoise2.ar(LFNoise1.kr(1).range(0.1, 1.0)).range(-0.8, 0.8);
-		Out.ar(out, Pan2.ar(sig, pan)); // Replace with PanAz
+		// panning
+		// PanAz in mono -> pan = 0
+		// PanAz in stereo -> -0.4 < pan < 0.4 (speakers are located at +/- 0.5)
+		pan = LFNoise2.ar(LFNoise1.kr(1).range(0.1, 1.0)).range(-0.4, 0.4) * (~fMnumOut - 1);
+		// Out.ar(out, Pan2.ar(sig, pan)); // Replace with PanAz
+		Out.ar(out, PanAz.ar(~fMnumOut, sig, pan)); // Replace with PanAz
 	}).add;
 
 	// Control SynthDef
@@ -758,7 +773,7 @@ s.waitForBoot({
 		var sig;
 		fFreq = fFreq.lag(0.1);
 		// fFreq.poll;
-		sig = In.ar(in, ~fMnumChannels);
+		sig = In.ar(in, ~fMnumOut);
 		// sig = LPF.ar(sig, fFreq);
 		sig = RLPF.ar(sig, fFreq, rq);
 		ReplaceOut.ar(in, sig);
@@ -769,7 +784,7 @@ s.waitForBoot({
 	SynthDef(\triBand, {
 		arg in=0, out=0, freq1=500, freq2=8000, gainLow=1.0, gainMid=1.0, gainHigh=1.0;
 		var sig, sigLow, sigMid, sigHigh;
-		sig = In.ar(in, ~fMnumChannels);
+		sig = In.ar(in, ~fMnumOut);
 		sig = BLowShelf.ar(sig, freq1, 1, gainLow-gainMid);
 		sig = BHiShelf.ar(sig, freq2, 1, gainHigh-gainMid);
 		sig = gainMid.dbamp * sig;
@@ -784,7 +799,7 @@ s.waitForBoot({
 		mix = mix.lag(0.1);
 		room = room.lag(0.1);
 		damp = damp.lag(0.1);
-		sig = In.ar(in, ~fMnumChannels);
+		sig = In.ar(in, ~fMnumOut);
 		sig = FreeVerb.ar(   // formerly FreeVerb2.... -> multichannel
 			sig,
 			// sig[1],
@@ -803,12 +818,18 @@ s.waitForBoot({
 		arg in=0, out=0, mix=0;
 		var dry, wet, sig, nTap;
 		nTap = 3;
-		dry = In.ar(in, ~fMnumChannels);
-		wet = DelayC.ar(
-			dry,
-			0.03,
-			SinOsc.ar(0.1, (0..nTap - 1) / nTap * 2pi).linlin(-1, 1, 10e-3, 20e-3)
-		).sum / sqrt(nTap);
+		// define if audio coming in is mono or stereo
+		dry = In.ar(in, ~fMnumOut);
+		// wet calculation
+		wet = ~fMnumOut.collect{ |i|
+			DelayC.ar(
+				dry,
+				0.03,
+				SinOsc.ar(0.1, ((0..nTap - 1) + (i * 0.5)) / nTap * 2pi)
+				.linlin(-1, 1, [10e-3, 5e-3][~fMnumOut - 1], 20e-3)
+			).sum / sqrt(nTap);
+		};
+		// 2 channel equal power crossfade (mix/pan in [-1,+1])
 		sig = XFade2.ar(dry, wet, mix);
 		ReplaceOut.ar(in, sig);
 	}).add;
@@ -816,7 +837,7 @@ s.waitForBoot({
 	// security compressor
 	SynthDef(\comp, {
 		arg in=0, out=0, thresh=0.5;
-		in = In.ar(in, ~fMnumChannels);
+		in = In.ar(in, ~fMnumOut);
 		in = Compander.ar(in , in, thresh, 1.0, 0.1, 0.005) * 0.9;
 		Out.ar(out, in);
 	}).add;
