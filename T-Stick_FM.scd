@@ -35,10 +35,10 @@ s.options.numOutputBusChannels_(~fMnumChannels);
 ~masterVol = -9;
 
 // T-Stick name
-~fMtStick = "TStick_570";
+~fMtStick = "TStick_516";
 
 // receiving port
-~fMrecvPort = 8200;
+~fMrecvPort = 8100;
 
 // audio output bus
 ~out = 0;
@@ -216,7 +216,7 @@ Window.closeAll;
 // create buffer for LPF
 ~fMmakeBuffers = {
 	~fsrBuf = Buffer.alloc(s, 1024);
-	"----------------".postln;" Buffers created".postln;"----------------".postln;
+	"--------------------------------".postln;"        Buffers created".postln;"--------------------------------".postln;
 };
 
 
@@ -304,7 +304,7 @@ Window.closeAll;
 	// Audio busses for FX
 	~fMbusFX = Bus.audio(s,~fMnumChannels);
 
-	" Busses created".postln;"----------------".postln;
+	"Control and audio busses created".postln;"--------------------------------".postln;
 };
 
 // TBC Eli Fieldsteel
@@ -318,8 +318,8 @@ Window.closeAll;
 // Create various fx and modulation Synth when server has booted
 ~fMmakeNodes = {
 	s.bind({
+
 		~fMmainGrp = Group.new;
-		// ~fMmodGrp = Group.before(~fMmainGrp); // TBC where it should be placed....
 		~fMfxGrp = Group.after(~fMmainGrp);
 		~fMlimGrp = Group.after(~fMfxGrp);
 
@@ -340,7 +340,6 @@ Window.closeAll;
 
 		// low-pass Synth
 		~fMlpfSynth = Synth(\lpf, [\in, ~fMbusFX, \fFreq, ~fMfFreq, \rq, 0.5, \out, 0], ~fMfxGrp);
-
 
 		//
 		// Schmidt trigger VÉRIFIER!!!!
@@ -363,7 +362,23 @@ Window.closeAll;
 	});
 
 
-	" Nodes created".postln;"----------------".postln;
+	"         Nodes created".postln;"--------------------------------".postln;
+};
+
+// mapping of control busses on synth control parameters (placeholder not used in this case)
+~fMmakeMaps = {
+	// Wait to make sure Synth are created
+	"       Creating mappings".postln;
+	32.do{0.1.wait; "-".post;};
+	"".postln;
+	s.bind({
+
+		// mappings of ...
+
+		// mappings of \triBand
+
+		// mappings of \reverb
+	});
 };
 
 ////////////////////////////////
@@ -654,7 +669,7 @@ Window.closeAll;
 	// Assign OSC data to control busses
 	~busDmi.keys.do({
 		arg item, i;
-		~busDmi[item].postln;
+		// ~busDmi[item].postln;
 		OSCdef(item, {
 			arg msg;
 			// Remove the addres from the OSC message
@@ -675,7 +690,9 @@ Window.closeAll;
 
 		case
 		{ ~toggle == 1 } {
-			~mappingGrp.free; // frees mapping nodes -> cuts off sound
+			// ~mappingGrp.free; // frees mapping nodes -> cuts off sound (not applicable here)
+			// Mute sound
+			defer{v.volume = -90};
 			~calibrationFunc.(1, ~busDmi[~fMtStick ++ "/raw/fsr"], ~calibrationVals, \fsr);
 			"FSR Calibration Started".postln;
 
@@ -697,11 +714,15 @@ Window.closeAll;
 		{ ~toggle == 7 } {
 			~calibrationFunc.(0);
 			"Maximum Shake Calibration Completed".postln;
-			~makeBusMappings.();
+			// ~makeBusMappings.();
+			// Restore sound
+			defer{v.volume = ~masterVol};
 		}
 	}, ~fMtStick ++ "/instrument/button/tap", recvPort: ~recvPort);
 
-	" OSCdef created".postln;"----------------".postln;
+	"        OSCdef created".postln;"--------------------------------".postln;
+	// Last step of process: OSCdef creation
+	"           DMI READY".postln;"--------------------------------".postln;
 };
 
 ////////////////////////////////
@@ -709,7 +730,7 @@ Window.closeAll;
 ////////////////////////////////
 ServerBoot.add(~fMmakeBuffers);
 ServerBoot.add(~fMmakeBusses);
-ServerBoot.add(~fMmakeOSCdef);
+// ServerBoot.add(~fMmakeOSCdef); // moved to \remaining functions
 ServerQuit.add(~fMcleanup);
 
 
@@ -717,12 +738,13 @@ ServerQuit.add(~fMcleanup);
 //5. boot server
 ////////////////////////////////
 
-"----------------".postln;" BOOTING SERVER".postln;"----------------".postln;
+"".postln;"--------------------------------".postln;"        BOOTING SERVER".postln;"--------------------------------".postln;
 
 // wait for boot function
 s.waitForBoot({
 
 	s.sync;
+	"--------------------------------".postln;"         SERVER BOOTED".postln;"--------------------------------".postln;
 
 	////////////////
 	//6a. SynthDefs
@@ -858,13 +880,14 @@ s.waitForBoot({
 	//6b. Register remaining functions
 	////////////////
 
-
 	ServerMeter(s, 2, ~fMnumChannels);
 	FreqScope.new; // doesn't work if ServerBoot.removeAll is called
 
 	s.plotTree;
 
+	// Create audio Synth then wait for command to be completed
 	ServerTree.add(~fMmakeNodes);
+	s.sync;
 
 	// FSR envelope
 	~fsrBuf.sendCollection(
@@ -877,8 +900,15 @@ s.waitForBoot({
 
 	s.sync;
 
-	// ServerTree.add(~fMmakeMaps); // TEMPORARY
-	s.freeAll;
+	// Maps Synth parameters to control busses
+	ServerTree.add(~fMmakeMaps); // placeholder
+	s.sync;
+
+	// Create OSCdef (make sure all busses and mapping synth are already created)
+	ServerTree.add(~fMmakeOSCdef);
+	s.sync;
+
+	s.freeAll; // necessary?
 
 	// Main Volume
 	v = s.volume;
@@ -887,7 +917,6 @@ s.waitForBoot({
 
 	s.sync;
 
-	"----------------".postln;" SERVER BOOTED".postln;"----------------".postln;
 });
 // end of wait for boot function
 
@@ -896,34 +925,3 @@ s.waitForBoot({
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                      END MAIN CODE                                                         //
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-OSCdef(\gyro).disable;
-OSCdef(\gyro).enable;
-~fMrevSynth.set(\mix, 0.99)
-~fMrevSynth.set(\mix, 0)
-~fMchorusSynth.set(\mix, -1)
-
-OSCdef.all.do{|item| item.disable};
-OSCdef.all.do{|item| item.enable};
-
-
-(
-
-
-)
-
-BusPlot(~fMbusShake, "Shake");
-
-(
-~calibShake = OSCdef(\calibShake, {
-	arg msg;
-	~tthresh;
-}, ~fMtStick ++ "/instrument/shakexyz", recvPort: ~fMrecvPort)
-)
-
-
-OSCdef.all.keys.do{|item| item.postln;};
-
-
-
-
