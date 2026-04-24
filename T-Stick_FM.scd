@@ -32,7 +32,7 @@ s.options.sampleRate_(48000);
 s.options.numOutputBusChannels_(~fMnumChannels);
 
 // Main Volume in dBFS (may be adjusted in volume GUI)
-~masterVol = -9;
+~masterVol = 0;
 
 // T-Stick name
 ~fMtStick = "TStick_516";
@@ -121,6 +121,10 @@ Window.closeAll;
 ~fMdevMax = 3.0;
 
 ~fMsynthArray = Array.fill(128, nil);
+~fMsynthIndex = 0; // incremental index of audio synth
+~fMnumGrp = 3; // number of groups to store audio Synth
+~fMsynthGrpSize = 32; // number of audio Synth per group
+~fMprevGrp = 1; // because first Synth are sent to group 0, (0 - 2).wrap(0, 2) = 1
 
 ~fMcmArray = [1/9, 1/8, 1/7, 1/6, 1/5, 2/9, 2/8, 2/7, 2/6, 3/8, 2/5, 3/7]; // À REVISITER TAILLE BODY (11 ou 12...)
 
@@ -320,24 +324,24 @@ Window.closeAll;
 	s.bind({
 
 		~fMmainGrp = Group.new;
-		~fMfxGrp = Group.after(~fMmainGrp);
-		~fMlimGrp = Group.after(~fMfxGrp);
-
+		// groups inside of main one for audio synth management
+		~fMsynthGrp = Array.fill(~fMnumGrp, {Group.new(~fMmainGrp)});
+		~fMfxGrp = Group.after(~fMmainGrp); // FX synth group
+		~fMlimGrp = Group.after(~fMfxGrp); // limiter group (could be removed when using SafetyNet quark)
+		~fMmapGrp = Group.new; // group for modulation synth
 
 		~fMmodulatorCM = ~fMbusCm.numChannels.collect{
 			arg i;
-			Synth(\modulatorCm, [\out, ~fMbusCm.subBus(i), \cm, ~fMcmArray[i]], ~fMmainGrp);
+			Synth(\modulatorCm, [\out, ~fMbusCm.subBus(i), \cm, ~fMcmArray[i]], ~fMmapGrp);
 		};
 
 		// Create synth modulating
 		~fMmodulatorIndex = ~fMbusModIndex.numChannels.collect{
 			arg i;
-			Synth(\modulatorIndex, [\out, ~fMbusModIndex.subBus(i), \dev, 1], ~fMmainGrp);
+			Synth(\modulatorIndex, [\out, ~fMbusModIndex.subBus(i), \dev, 1], ~fMmapGrp);
 		};
 
-
-
-
+		//
 		// low-pass Synth
 		~fMlpfSynth = Synth(\lpf, [\in, ~fMbusFX, \fFreq, ~fMfFreq, \rq, 0.5, \out, 0], ~fMfxGrp);
 
@@ -400,6 +404,7 @@ Window.closeAll;
 	OSCdef(\touch, {
 		arg msg;
 		var caps, trig, body, oct, capsRedux = Array.fill(15, nil);
+		var targetGrpIndex, id;
 
 		// capsense #16 is absent of TStick_311, and is located under the bottom endcap on TStick_191
 		// only capsense  #1 to #15 are used
@@ -453,6 +458,18 @@ Window.closeAll;
 			arg item, i;
 			var root;
 			if((item > 0), {
+				// wrap synth ID allowed range
+				id = ~fMsynthIndex % (~fMnumGrp * ~fMsynthGrpSize);
+
+				// calculate target group index in the array
+				targetGrpIndex = (id / ~fMsynthGrpSize).floor;
+
+				// detect group change (start new block of synth)
+				if(targetGrpIndex !=  ~fMprevGrp) {
+					// if synth is played in the next group, free all synth in group n-2
+					~fMsynthGrp[(targetGrpIndex - 2) % ~fMnumGrp].freeAll;
+				};
+
 				// root = ~fMbusRoot.getSynchronous();
 				// root = ~fMnotes[rand(~fMnotes.size)];
 				root = ~fMnotes[i]; // essayer de fixer
@@ -474,12 +491,15 @@ Window.closeAll;
 					// \relCrv, ~fMbusAtkRel.subBus(3).getSynchronous() * (0.9.rrand(1.1)),
 					\out, ~fMbusFX,
 				],
-				// Synth in Main Group
-				~fMmainGrp);
+				// Synth in Main Group / SubGroups
+				~fMsynthGrp[targetGrpIndex]);
 				// ~fMsynthArray[i].map(\index, ~fMbusIndex);
 				~fMsynthArray[i].map(\cm, ~fMbusCm.subBus(i));
 				~fMsynthArray[i].map(\amp, ~fMbusAmp);
 				// ~fMbusAtkRel.get();
+				// increment synth ID and group
+				~fMsynthIndex = ~fMsynthIndex + 1;
+				~fMprevGrp = targetGrpIndex;
 			});
 			if((item < 0), {
 				// ~fMcmArray[i].asFraction.postln;
