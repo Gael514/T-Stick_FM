@@ -11,12 +11,15 @@
 
 s = Server.local;
 // Select output device
+s.options.numInputBusChannels = 0;
 s.options.outDevice_(
-	// "Windows WASAPI : Microphone Array (Realtek High Definition Audio)"
+	"Windows WASAPI : Microphone Array (Realtek High Definition Audio)"
+	// "MacBook Pro Speakers"
 	// "ASIO : Focusrite USB ASIO"
 	// "ASIO : ReaRoute ASIO (x64)";
+	// "ASIO : MOTU M Series";
 	// "ASIO : AudioBox ASIO Driver"
-	"ASIO : ASIO MADIface USB"
+	// "ASIO : ASIO MADIface USB"
 );
 s.options.sampleRate_(48000);
 
